@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>kafka-sasl-ssl-v8 Architecture</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'JetBrains Mono', monospace; background: #020617; min-height: 100vh; padding: 2rem; color: white; }
+    .container { max-width: 1340px; margin: 0 auto; }
+    .header { margin-bottom: 1.5rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.4rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #fb923c; border-radius: 50%; flex-shrink: 0; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -.02em; }
+    .subtitle { color: #94a3b8; font-size: .8rem; margin-left: 1.75rem; }
+    .diagram-container { background: rgba(15,23,42,.5); border-radius: 1rem; border: 1px solid #1e293b; padding: 1.25rem; overflow-x: auto; }
+    svg { width: 100%; min-width: 1260px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(3,1fr); gap: 1rem; margin-top: 1.5rem; }
+    .card { background: rgba(15,23,42,.5); border-radius: .75rem; border: 1px solid #1e293b; padding: 1.1rem; }
+    .card-header { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .card-dot.orange  { background: #fb923c; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.rose    { background: #fb7185; }
+    .card h3 { font-size: .8rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: .72rem; }
+    .card li { margin-bottom: .3rem; }
+    .footer { text-align: center; margin-top: 1.25rem; color: #475569; font-size: .72rem; }
+    .toolbar { display: flex; gap: .5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle { background: transparent; border: none; color: #475569; cursor: pointer; font-size: 1.2rem; line-height: 1; padding: .25rem .5rem; border-radius: .375rem; transition: color .2s,background .2s; }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30,41,59,.5); }
+    .toolbar-actions { display: none; gap: .5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button { background: rgba(30,41,59,.8); border: 1px solid #334155; color: #94a3b8; padding: .35rem .7rem; border-radius: .375rem; font-family: inherit; font-size: .72rem; cursor: pointer; transition: all .2s; white-space: nowrap; }
+    .toolbar-actions button:hover { background: rgba(51,65,85,.8); color: white; border-color: #475569; }
+    @media print { .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-row">
+      <div class="pulse-dot"></div>
+      <h1>kafka-sasl-ssl-v8 &nbsp;·&nbsp; Architecture</h1>
+      <div class="toolbar">
+        <div class="toolbar-actions">
+          <button onclick="copyAsImage(this)">📋 Copy</button>
+          <button onclick="downloadPNG(this)">🖼️ PNG</button>
+          <button onclick="downloadPDF(this)">📄 PDF</button>
+        </div>
+        <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export">⋯</button>
+      </div>
+    </div>
+    <p class="subtitle">3-broker KRaft · SASL/GSSAPI · Schema Registry · ksqlDB · Kafka Connect · SSL-only client · CP 8.2.0 / Kafka 4.2 · <KAFKA_HOST_IP></p>
+  </div>
+
+  <div class="diagram-container">
+  <!--
+    LAYOUT (all coordinates are SVG user units, viewBox 0 0 1300 720)
+    External (left)  x=10..165
+    Host boundary    x=178..1286  y=15..705
+    Docker boundary  x=193..1276  y=33..697
+    Kafka cluster    x=208..1040  y=53..239
+    KDC              x=1055..1248 y=53..145
+    Confluent services    x=208..1040  y=259..424
+    PostgreSQL       x=1055..1248 y=259..357
+    Cert / Legend    x=208..682 / x=704..1040  y=444..682
+  -->
+  <svg viewBox="0 0 1300 720" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="ah"        markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#64748b"/></marker>
+      <marker id="ah-rose"   markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#fb7185"/></marker>
+      <marker id="ah-amber"  markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#fbbf24"/></marker>
+      <marker id="ah-emld"   markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#34d399"/></marker>
+      <marker id="ah-vlt"    markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#a78bfa"/></marker>
+      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width=".5"/>
+      </pattern>
+    </defs>
+
+    <!-- ── 1. BACKGROUND ── -->
+    <rect width="1300" height="720" fill="url(#grid)"/>
+
+    <!-- ── 2. BOUNDARY BOXES (drawn before arrows so arrows appear on top) ── -->
+
+    <!-- Host server -->
+    <rect x="178" y="15" width="1108" height="690" rx="12"
+          fill="rgba(120,53,15,0.04)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+    <text x="190" y="30" fill="#fbbf24" font-family="JetBrains Mono,monospace" font-size="9" font-weight="600"><KAFKA_HOST_IP> — AlmaLinux</text>
+
+    <!-- Docker network -->
+    <rect x="193" y="33" width="1083" height="664" rx="10"
+          fill="rgba(8,51,68,0.03)" stroke="#22d3ee" stroke-width=".6" stroke-dasharray="6,4"/>
+    <text x="205" y="47" fill="#22d3ee" font-family="JetBrains Mono,monospace" font-size="8">kafka-net  172.31.0.0/24</text>
+
+    <!-- Kafka cluster group -->
+    <rect x="208" y="53" width="832" height="186" rx="8"
+          fill="rgba(251,146,60,0.04)" stroke="#fb923c" stroke-width="1" stroke-dasharray="5,3"/>
+    <text x="220" y="67" fill="#fb923c" font-family="JetBrains Mono,monospace" font-size="8" font-weight="600">Kafka Cluster  ·  KRaft (no ZooKeeper)  ·  Cluster ID: v9QkkNkaQfCyup16RviRyQ</text>
+
+    <!-- Kafka services group -->
+    <rect x="208" y="259" width="832" height="165" rx="8"
+          fill="rgba(8,51,68,0.06)" stroke="#22d3ee" stroke-width="1" stroke-dasharray="5,3"/>
+    <text x="220" y="273" fill="#22d3ee" font-family="JetBrains Mono,monospace" font-size="8" font-weight="600">Kafka Services  ·  Confluent Platform 8.2.0</text>
+
+    <!-- ── 3. ARROWS (behind components) ── -->
+
+    <!-- SSL client → kafka1  SSL/mTLS :9197  (rose dashed) -->
+    <path d="M165,143 L222,143" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ah-rose)"/>
+    <text x="166" y="139" fill="#fb7185" font-family="JetBrains Mono,monospace" font-size="7.5" font-weight="500">SSL/mTLS :9197/98/99</text>
+
+    <!-- SSL client → Confluent services group  HTTPS  (emerald) -->
+    <path d="M165,175 L180,175 L180,333 L208,333" fill="none" stroke="#34d399" stroke-width="1.3" marker-end="url(#ah-emld)"/>
+    <text x="182" y="255" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="7.5" font-weight="500">HTTPS</text>
+    <text x="182" y="266" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="7.5">:8081/88/83</text>
+
+    <!-- RDRS → kafka1  SASL_SSL :9193  (amber) -->
+    <path d="M165,278 L193,278 L193,170 L222,170" fill="none" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#ah-amber)"/>
+    <text x="195" y="230" fill="#fbbf24" font-family="JetBrains Mono,monospace" font-size="7.5" font-weight="500">SASL_SSL</text>
+    <text x="195" y="241" fill="#fbbf24" font-family="JetBrains Mono,monospace" font-size="7.5">:9193/94/95</text>
+
+    <!-- Schema Registry → Kafka cluster  (amber, internal) -->
+    <path d="M329,283 L329,239" fill="none" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#ah-amber)"/>
+
+    <!-- ksqlDB → Kafka cluster  (amber, internal) -->
+    <path d="M569,283 L569,239" fill="none" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#ah-amber)"/>
+
+    <!-- Connect → Kafka cluster  (amber, internal) -->
+    <path d="M805,283 L805,239" fill="none" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#ah-amber)"/>
+    <text x="350" y="236" fill="#fbbf24" font-family="JetBrains Mono,monospace" font-size="7">SASL_SSL (internal → brokers)</text>
+
+    <!-- ksqlDB → Schema Registry  (emerald, horizontal) -->
+    <path d="M459,340 L437,340" fill="none" stroke="#34d399" stroke-width="1.2" marker-end="url(#ah-emld)"/>
+    <text x="439" y="336" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="7">HTTPS</text>
+
+    <!-- Connect → Schema Registry  (emerald, U-shape below service boxes) -->
+    <path d="M805,383 L805,408 L329,408 L329,383" fill="none" stroke="#34d399" stroke-width="1.2" marker-end="url(#ah-emld)"/>
+    <text x="545" y="404" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="7" text-anchor="middle">HTTPS</text>
+
+    <!-- Kafka cluster → KDC  Kerberos/GSSAPI  (rose dashed) -->
+    <path d="M1040,115 L1055,115" fill="none" stroke="#fb7185" stroke-width="1.3" stroke-dasharray="5,3" marker-end="url(#ah-rose)"/>
+    <text x="1041" y="111" fill="#fb7185" font-family="JetBrains Mono,monospace" font-size="7">Kerberos / GSSAPI</text>
+
+    <!-- Connect → PostgreSQL  (violet dashed) -->
+    <path d="M912,333 L1055,333" fill="none" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#ah-vlt)"/>
+    <text x="915" y="329" fill="#a78bfa" font-family="JetBrains Mono,monospace" font-size="7">JDBC :5432</text>
+
+    <!-- ── 4. COMPONENT BOXES ── -->
+
+    <!-- ═══ KDC ═══ -->
+    <rect x="1055" y="53" width="193" height="92" rx="6" fill="#0f172a"/>
+    <rect x="1055" y="53" width="193" height="92" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+    <text x="1151" y="74" fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">kafka-kdc</text>
+    <text x="1151" y="89" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">172.31.0.10  ·  :18088</text>
+    <text x="1151" y="103" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">MIT Kerberos KDC</text>
+    <text x="1151" y="116" fill="#fb7185" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">realm KAFKA.LOCAL</text>
+    <text x="1151" y="129" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">256 MB</text>
+
+    <!-- ═══ kafka1  (broker + controller, taller) ═══ -->
+    <rect x="222" y="74" width="214" height="150" rx="6" fill="#0f172a"/>
+    <rect x="222" y="74" width="214" height="150" rx="6" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1.5"/>
+    <text x="329" y="93"  fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">kafka1</text>
+    <text x="329" y="107" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">172.31.0.11  ·  Broker + Controller</text>
+    <text x="329" y="122" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">SASL_SSL :9193</text>
+    <text x="329" y="136" fill="#fb7185" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">SSL/mTLS :9197</text>
+    <text x="329" y="150" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">PLAINTEXT :9192</text>
+    <text x="329" y="164" fill="#fb923c" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">INTERNAL :19093</text>
+    <text x="329" y="177" fill="#fb923c" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">KRaft voter</text>
+    <text x="329" y="191" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">768 MB</text>
+
+    <!-- ═══ kafka2 ═══ -->
+    <rect x="458" y="74" width="214" height="130" rx="6" fill="#0f172a"/>
+    <rect x="458" y="74" width="214" height="130" rx="6" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1.5"/>
+    <text x="565" y="93"  fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">kafka2</text>
+    <text x="565" y="107" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">172.31.0.12  ·  Broker</text>
+    <text x="565" y="122" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">SASL_SSL :9194</text>
+    <text x="565" y="136" fill="#fb7185" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">SSL/mTLS :9198</text>
+    <text x="565" y="150" fill="#fb923c" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">INTERNAL :19094</text>
+    <text x="565" y="163" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">768 MB</text>
+
+    <!-- ═══ kafka3 ═══ -->
+    <rect x="694" y="74" width="214" height="130" rx="6" fill="#0f172a"/>
+    <rect x="694" y="74" width="214" height="130" rx="6" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1.5"/>
+    <text x="801" y="93"  fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">kafka3</text>
+    <text x="801" y="107" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">172.31.0.13  ·  Broker</text>
+    <text x="801" y="122" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">SASL_SSL :9195</text>
+    <text x="801" y="136" fill="#fb7185" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">SSL/mTLS :9199</text>
+    <text x="801" y="150" fill="#fb923c" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">INTERNAL :19095</text>
+    <text x="801" y="163" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">768 MB</text>
+
+    <!-- ═══ Schema Registry ═══ -->
+    <rect x="222" y="283" width="214" height="100" rx="6" fill="#0f172a"/>
+    <rect x="222" y="283" width="214" height="100" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="329" y="301" fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">schema-registry</text>
+    <text x="329" y="315" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">172.31.0.20  ·  :8081</text>
+    <text x="329" y="329" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">HTTPS with mTLS</text>
+    <text x="329" y="343" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">Confluent Schema Registry 8.2.0</text>
+    <text x="329" y="357" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">256 MB</text>
+
+    <!-- ═══ ksqlDB ═══ -->
+    <rect x="458" y="283" width="214" height="100" rx="6" fill="#0f172a"/>
+    <rect x="458" y="283" width="214" height="100" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="565" y="301" fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">ksqldb</text>
+    <text x="565" y="315" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">172.31.0.21  ·  :8088</text>
+    <text x="565" y="329" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">HTTPS with mTLS</text>
+    <text x="565" y="343" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">Confluent ksqlDB 8.2.0</text>
+    <text x="565" y="357" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">512 MB</text>
+
+    <!-- ═══ Kafka Connect ═══ -->
+    <rect x="694" y="283" width="214" height="100" rx="6" fill="#0f172a"/>
+    <rect x="694" y="283" width="214" height="100" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+    <text x="801" y="301" fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">kafka-connect</text>
+    <text x="801" y="315" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">172.31.0.22  ·  :8083</text>
+    <text x="801" y="329" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">HTTPS with mTLS</text>
+    <text x="801" y="343" fill="#34d399" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">Confluent Kafka Connect 8.2.0</text>
+    <text x="801" y="357" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">384 MB</text>
+
+    <!-- ═══ PostgreSQL ═══ -->
+    <rect x="1055" y="259" width="193" height="98" rx="6" fill="#0f172a"/>
+    <rect x="1055" y="259" width="193" height="98" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="1151" y="278" fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">PostgreSQL</text>
+    <text x="1151" y="293" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle"><KAFKA_HOST_IP> (or other)</text>
+    <text x="1151" y="308" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">port 5432</text>
+    <text x="1151" y="323" fill="#a78bfa" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">External client database</text>
+    <text x="1151" y="337" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">already running</text>
+
+    <!-- ═══ SSL-only client (external, left) ═══ -->
+    <rect x="10" y="95" width="152" height="115" rx="6" fill="#0f172a"/>
+    <rect x="10" y="95" width="152" height="115" rx="6" fill="rgba(30,41,59,0.6)" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="86" y="114" fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">SSL-only client</text>
+    <text x="86" y="128" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">mainframe / z/OS</text>
+    <text x="86" y="143" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">SSL/mTLS client</text>
+    <text x="86" y="158" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">certs/tmon/</text>
+    <text x="86" y="171" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">tmon-client.keystore.p12</text>
+    <text x="86" y="183" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">kafka.truststore.p12</text>
+
+    <!-- ═══ RDRS Server (external, left) ═══ -->
+    <rect x="10" y="245" width="152" height="84" rx="6" fill="#0f172a"/>
+    <rect x="10" y="245" width="152" height="84" rx="6" fill="rgba(30,41,59,0.6)" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="86" y="264" fill="white"   font-family="JetBrains Mono,monospace" font-size="11" font-weight="600" text-anchor="middle">RDRS Server</text>
+    <text x="86" y="278" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle"><RDRS_HOST_IP></text>
+    <text x="86" y="292" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8"  text-anchor="middle">SCRAM-SHA-256 + mTLS</text>
+    <text x="86" y="306" fill="#64748b" font-family="JetBrains Mono,monospace" font-size="7"  text-anchor="middle">Rocket Software CDC</text>
+
+    <!-- ── 5. INFO BOXES ── -->
+
+    <!-- Cert Paths box -->
+    <rect x="208" y="444" width="472" height="246" rx="6" fill="rgba(15,23,42,0.8)" stroke="#334155" stroke-width="1"/>
+    <text x="444" y="462" fill="white" font-family="JetBrains Mono,monospace" font-size="10" font-weight="600" text-anchor="middle">Cert Paths on <KAFKA_HOST_IP>  (/app/kafka-sasl-ssl-v8/)</text>
+    <line x1="218" y1="468" x2="670" y2="468" stroke="#334155" stroke-width=".7"/>
+
+    <text x="220" y="482" fill="#94a3b8"  font-family="JetBrains Mono,monospace" font-size="8" font-weight="600">SSL-only client handoff  (give to mainframe team)</text>
+    <text x="220" y="495" fill="#64748b"  font-family="JetBrains Mono,monospace" font-size="7.5">  certs/tmon/tmon-client.keystore.p12</text>
+    <text x="220" y="507" fill="#64748b"  font-family="JetBrains Mono,monospace" font-size="7.5">  certs/tmon/tmon-client.crt  +  tmon-client.key</text>
+    <text x="220" y="519" fill="#64748b"  font-family="JetBrains Mono,monospace" font-size="7.5">  certs/tmon/kafka.truststore.p12</text>
+    <text x="220" y="531" fill="#64748b"  font-family="JetBrains Mono,monospace" font-size="7.5">  certs/ca/ca-cert.crt</text>
+
+    <text x="220" y="547" fill="#fb923c"  font-family="JetBrains Mono,monospace" font-size="8" font-weight="600">Kafka Brokers</text>
+    <text x="220" y="559" fill="#64748b"  font-family="JetBrains Mono,monospace" font-size="7.5">  certs/broker/kafka{1,2,3}.keystore.p12</text>
+    <text x="220" y="571" fill="#64748b"  font-family="JetBrains Mono,monospace" font-size="7.5">  certs/broker/kafka.truststore.p12</text>
+
+    <text x="220" y="587" fill="#34d399"  font-family="JetBrains Mono,monospace" font-size="8" font-weight="600">Confluent Services</text>
+    <text x="220" y="599" fill="#64748b"  font-family="JetBrains Mono,monospace" font-size="7.5">  certs/schema-registry/schema-registry.keystore.p12</text>
+    <text x="220" y="611" fill="#64748b"  font-family="JetBrains Mono,monospace" font-size="7.5">  certs/ksqldb/ksqldb.keystore.p12</text>
+    <text x="220" y="623" fill="#64748b"  font-family="JetBrains Mono,monospace" font-size="7.5">  certs/connect/connect.keystore.p12</text>
+
+    <line x1="218" y1="632" x2="670" y2="632" stroke="#1e293b" stroke-width=".7"/>
+    <text x="220" y="644" fill="#475569"  font-family="JetBrains Mono,monospace" font-size="7.5">  All keystore / truststore passwords: <SSL_KEYSTORE_PASSWORD></text>
+    <text x="220" y="656" fill="#475569"  font-family="JetBrains Mono,monospace" font-size="7.5">  CA: certs/ca/ca-cert.crt  (sign all service &amp; client certs)</text>
+    <text x="220" y="668" fill="#475569"  font-family="JetBrains Mono,monospace" font-size="7.5">  PKCS12 format  ·  mTLS required on all SSL listeners</text>
+
+    <!-- Legend box -->
+    <rect x="694" y="444" width="350" height="246" rx="6" fill="rgba(15,23,42,0.8)" stroke="#334155" stroke-width="1"/>
+    <text x="869" y="462" fill="white" font-family="JetBrains Mono,monospace" font-size="10" font-weight="600" text-anchor="middle">Legend</text>
+    <line x1="704" y1="468" x2="1034" y2="468" stroke="#334155" stroke-width=".7"/>
+
+    <!-- Component colors -->
+    <rect x="706" y="476" width="14" height="10" rx="2" fill="rgba(251,146,60,0.3)"  stroke="#fb923c" stroke-width="1"/>
+    <text x="726" y="485" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">Kafka Broker</text>
+
+    <rect x="706" y="492" width="14" height="10" rx="2" fill="rgba(6,78,59,0.4)"    stroke="#34d399" stroke-width="1"/>
+    <text x="726" y="501" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">Kafka Service  (SR / ksqlDB / Connect)</text>
+
+    <rect x="706" y="508" width="14" height="10" rx="2" fill="rgba(136,19,55,0.4)"  stroke="#fb7185" stroke-width="1"/>
+    <text x="726" y="517" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">Kerberos KDC</text>
+
+    <rect x="706" y="524" width="14" height="10" rx="2" fill="rgba(76,29,149,0.4)"  stroke="#a78bfa" stroke-width="1"/>
+    <text x="726" y="533" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">PostgreSQL</text>
+
+    <rect x="706" y="540" width="14" height="10" rx="2" fill="rgba(30,41,59,0.6)"   stroke="#94a3b8" stroke-width="1"/>
+    <text x="726" y="549" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">External client  (SSL-only client / RDRS)</text>
+
+    <!-- Connection types -->
+    <line x1="706" y1="568" x2="720" y2="568" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,2"/>
+    <text x="726" y="572" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">SSL / mTLS  ·  Kerberos GSSAPI</text>
+
+    <line x1="706" y1="584" x2="720" y2="584" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="726" y="588" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">SASL_SSL  (SCRAM-SHA-256 + mTLS)</text>
+
+    <line x1="706" y1="600" x2="720" y2="600" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3,2"/>
+    <text x="726" y="604" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">SASL_SSL internal  (service → broker)</text>
+
+    <line x1="706" y1="616" x2="720" y2="616" stroke="#34d399" stroke-width="1.5"/>
+    <text x="726" y="620" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">HTTPS with mTLS</text>
+
+    <line x1="706" y1="632" x2="720" y2="632" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4,2"/>
+    <text x="726" y="636" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">JDBC  (PostgreSQL)</text>
+
+    <line x1="706" y1="650" x2="720" y2="650" stroke="#fbbf24" stroke-width=".8" stroke-dasharray="8,4"/>
+    <text x="726" y="654" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">Host server boundary</text>
+
+    <line x1="706" y1="658" x2="720" y2="658" stroke="#22d3ee" stroke-width=".6" stroke-dasharray="6,4"/>
+    <text x="726" y="662" fill="#94a3b8" font-family="JetBrains Mono,monospace" font-size="8">Docker network / Kafka services group</text>
+
+  </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot orange"></div><h3>Kafka Cluster</h3></div>
+      <ul>
+        <li>• 3-broker KRaft — no ZooKeeper</li>
+        <li>• CP 8.2.0 / Apache Kafka 4.2</li>
+        <li>• Cluster ID: v9QkkNkaQfCyup16RviRyQ</li>
+        <li>• SASL_SSL: 9193 / 9194 / 9195  (SCRAM + Kerberos)</li>
+        <li>• SSL/SSL client: 9197 / 9198 / 9199  (mTLS, no SASL)</li>
+        <li>• PLAINTEXT: 9192  (kafka1 only, lab use)</li>
+        <li>• SCRAM users: admin · app-client · demo-user</li>
+        <li>• KDC: kafka-kdc  ·  realm KAFKA.LOCAL  :18088</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot emerald"></div><h3>Kafka Services</h3></div>
+      <ul>
+        <li>• Schema Registry — https://<KAFKA_HOST_IP>:8081</li>
+        <li>• ksqlDB          — https://<KAFKA_HOST_IP>:8088</li>
+        <li>• Kafka Connect   — https://<KAFKA_HOST_IP>:8083</li>
+        <li>• All connect internally to brokers via SASL_SSL</li>
+        <li>• SSL client connects to all via SSL/mTLS or HTTPS</li>
+        <li>• Kafka brokers (SSL client) — <KAFKA_HOST_IP>:9197/98/99</li>
+        <li>• PostgreSQL: existing instance  :5432</li>
+        <li>• SSL client topics created by installer (not pre-created)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot rose"></div><h3>Security &amp; Certs</h3></div>
+      <ul>
+        <li>• All certs PKCS12, signed by shared CA</li>
+        <li>• All passwords: <SSL_KEYSTORE_PASSWORD></li>
+        <li>• SSL-only client keystore (handoff): certs/tmon/</li>
+        <li>• mTLS required — all SSL listeners</li>
+        <li>• auto.create.topics.enable = false</li>
+        <li>• Network: 172.31.0.0/24  (v8 uses 172.30.0.0/24)</li>
+        <li>• Container names: kafka1/kafka2/kafka3, kafka-kdc (no prefix)</li>
+        <li>• RAM budget: ~3.71 GB total</li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="footer">kafka-sasl-ssl-v8 &nbsp;·&nbsp; CP 8.2.0 / Kafka 4.2 &nbsp;·&nbsp; <KAFKA_HOST_IP> (AlmaLinux) &nbsp;·&nbsp; /app/kafka-sasl-ssl-v8</p>
+</div>
+
+<script>
+  async function copyAsImage(btn) {
+    const orig = btn.textContent;
+    try {
+      const el = document.getElementById('report-container');
+      const r = el.getBoundingClientRect();
+      const pad = 32;
+      const canvas = await html2canvas(document.body, {
+        backgroundColor: '#020617', scale: 2, useCORS: true,
+        ignoreElements: e => e.classList && e.classList.contains('toolbar'),
+        x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad,
+        width: r.width + pad * 2, height: r.height + pad * 2
+      });
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+      await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+      btn.textContent = '✓ Copied!';
+    } catch(e) { btn.textContent = '✗ Failed'; }
+    setTimeout(() => btn.textContent = orig, 2000);
+  }
+
+  async function downloadPNG(btn) {
+    const orig = btn.textContent;
+    btn.textContent = '⏳ ...';
+    try {
+      const el = document.getElementById('report-container');
+      const r = el.getBoundingClientRect();
+      const pad = 32;
+      const canvas = await html2canvas(document.body, {
+        backgroundColor: '#020617', scale: 2, useCORS: true,
+        ignoreElements: e => e.classList && e.classList.contains('toolbar'),
+        x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad,
+        width: r.width + pad * 2, height: r.height + pad * 2
+      });
+      const a = document.createElement('a');
+      a.download = 'kafka-architecture.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+      btn.textContent = '✓ Done!';
+    } catch(e) { btn.textContent = '✗ Failed'; }
+    setTimeout(() => btn.textContent = orig, 2000);
+  }
+
+  async function downloadPDF(btn) {
+    const orig = btn.textContent;
+    btn.textContent = '⏳ ...';
+    try {
+      const el = document.getElementById('report-container');
+      const r = el.getBoundingClientRect();
+      const pad = 32;
+      const canvas = await html2canvas(document.body, {
+        backgroundColor: '#020617', scale: 2, useCORS: true,
+        ignoreElements: e => e.classList && e.classList.contains('toolbar'),
+        x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad,
+        width: r.width + pad * 2, height: r.height + pad * 2
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const {jsPDF} = window.jspdf;
+      const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+      const pdf = new jsPDF({orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling']});
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save('kafka-architecture.pdf');
+      btn.textContent = '✓ Done!';
+    } catch(e) { btn.textContent = '✗ Failed'; }
+    setTimeout(() => btn.textContent = orig, 2000);
+  }
+</script>
+</body>
+</html>

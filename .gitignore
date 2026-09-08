@@ -1,0 +1,9 @@
+.env
+*.env
+certs/
+*.key
+*.pem
+*.p12
+*.jks
+*.keytab
+docker-compose.yml.bak.*

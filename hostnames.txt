@@ -1,0 +1,7 @@
+kafka1
+kafka2
+kafka3
+schema
+ksqldb
+connect
+kdc

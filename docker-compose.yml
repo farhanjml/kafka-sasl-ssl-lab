@@ -1,0 +1,348 @@
+###############################################################################
+# kafka-sasl-ssl-v8 — 3-broker KRaft + Kerberos KDC + Schema Registry + ksqlDB + Connect
+# Confluent Platform 8.2.0 / Apache Kafka 4.2
+# Host: <KAFKA_HOST_IP> (AlmaLinux)
+#
+#   SASL_SSL : 9193 / 9194 / 9195
+#   PLAINTEXT: 9192 / 9292 / 9392  (no auth, no SSL — lab use)
+#   SSL      : 9197 / 9198 / 9199  (pure SSL, no SASL — for SSL-only clients)
+#
+# Additional services beyond core brokers:
+#   Schema Registry : 8081  (HTTPS / mTLS)
+#   ksqlDB          : 8088  (HTTPS / SSL)
+#   Kafka Connect   : 8083  (HTTPS / mTLS)
+#
+# Network: 172.31.0.0/24
+# RAM budget: ~3.7 GB total (requires upgraded host RAM)
+# Cluster ID: v9QkkNkaQfCyup16RviRyQ
+###############################################################################
+
+networks:
+  kafka-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+
+services:
+  # ─── Kerberos KDC ─────────────────────────────────────────────────────
+  kdc:
+    build: ./kerberos
+    container_name: kafka-kdc
+    hostname: kdc
+    ports:
+      - "18088:88"
+      - "18088:88/udp"
+      - "18749:749"
+    volumes:
+      - kdc-data:/var/lib/krb5kdc
+      - keytabs:/etc/keytabs
+    networks:
+      kafka-net:
+        ipv4_address: 172.31.0.10
+    mem_limit: 256m
+    restart: unless-stopped
+
+  # ─── Broker 1 (controller + broker) ───────────────────────────────────
+  kafka1:
+    image: confluentinc/cp-kafka:8.2.0
+    container_name: kafka1
+    hostname: kafka1
+    depends_on:
+      - kdc
+    ports:
+      - "9193:9093"   # SASL_SSL — external clients
+      - "9192:9092"   # PLAINTEXT — lab only, kafka1 only
+      - "9197:9097"   # SSL-only — pure mTLS, no SASL
+    environment:
+      # ── KRaft ──
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      CLUSTER_ID: "v9QkkNkaQfCyup16RviRyQ"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka1:9096"
+
+      # ── Listeners ──
+      KAFKA_LISTENERS: SASL_SSL://0.0.0.0:9093,CONTROLLER://0.0.0.0:9096,INTERNAL://0.0.0.0:19093,PLAINTEXT://0.0.0.0:9092,SSL://0.0.0.0:9097
+      KAFKA_ADVERTISED_LISTENERS: SASL_SSL://kafka1:9193,INTERNAL://kafka1:19093,PLAINTEXT://kafka1:9192,SSL://kafka1:9197
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_SSL:SASL_SSL,CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT,SSL:SSL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      # ── SASL (SASL_SSL listener only) ──
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256,SCRAM-SHA-512,GSSAPI
+      KAFKA_LISTENER_NAME_SASL__SSL_SCRAM_SHA_256_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"admin\" password=\"<ADMIN_SCRAM_PASSWORD>\";"
+      KAFKA_LISTENER_NAME_SASL__SSL_SCRAM_SHA_512_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"admin\" password=\"<ADMIN_SCRAM_PASSWORD>\";"
+      KAFKA_LISTENER_NAME_SASL__SSL_GSSAPI_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required useKeyTab=true storeKey=true keyTab=\"/etc/keytabs/kafka1.keytab\" principal=\"kafka/kafka1@KAFKA.LOCAL\";"
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: kafka
+
+      # ── SSL (shared across SASL_SSL and SSL listeners) ──
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka1.keystore.p12
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore_creds
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_SSL_KEY_CREDENTIALS: key_creds
+      KAFKA_SSL_CLIENT_AUTH: required
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+
+      # ── Broker settings ──
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/kafka_jaas.conf"
+    volumes:
+      - ./certs/broker:/etc/kafka/secrets:ro
+      - ./config/client-internal.properties:/etc/kafka/client-internal.properties:ro
+      - keytabs:/etc/keytabs:ro
+      - ./kerberos/krb5.conf:/etc/krb5.conf:ro
+      - kafka1-data:/var/lib/kafka/data
+    networks:
+      kafka-net:
+        ipv4_address: 172.31.0.11
+    mem_limit: 768m
+    restart: unless-stopped
+
+  # ─── Broker 2 ─────────────────────────────────────────────────────────
+  kafka2:
+    image: confluentinc/cp-kafka:8.2.0
+    container_name: kafka2
+    hostname: kafka2
+    depends_on:
+      - kdc
+      - kafka1
+    ports:
+      - "9194:9094"   # SASL_SSL
+      - "9292:9092"   # PLAINTEXT — lab only
+      - "9198:9098"   # SSL-only — pure mTLS, no SASL
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: broker
+      CLUSTER_ID: "v9QkkNkaQfCyup16RviRyQ"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka1:9096"
+
+      KAFKA_LISTENERS: SASL_SSL://0.0.0.0:9094,INTERNAL://0.0.0.0:19094,PLAINTEXT://0.0.0.0:9092,SSL://0.0.0.0:9098
+      KAFKA_ADVERTISED_LISTENERS: SASL_SSL://kafka2:9194,INTERNAL://kafka2:19094,PLAINTEXT://kafka2:9292,SSL://kafka2:9198
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_SSL:SASL_SSL,CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT,SSL:SSL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256,SCRAM-SHA-512,GSSAPI
+      KAFKA_LISTENER_NAME_SASL__SSL_SCRAM_SHA_256_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"admin\" password=\"<ADMIN_SCRAM_PASSWORD>\";"
+      KAFKA_LISTENER_NAME_SASL__SSL_SCRAM_SHA_512_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"admin\" password=\"<ADMIN_SCRAM_PASSWORD>\";"
+      KAFKA_LISTENER_NAME_SASL__SSL_GSSAPI_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required useKeyTab=true storeKey=true keyTab=\"/etc/keytabs/kafka2.keytab\" principal=\"kafka/kafka2@KAFKA.LOCAL\";"
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: kafka
+
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka2.keystore.p12
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore_creds
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_SSL_KEY_CREDENTIALS: key_creds
+      KAFKA_SSL_CLIENT_AUTH: required
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/kafka_jaas.conf"
+    volumes:
+      - ./certs/broker:/etc/kafka/secrets:ro
+      - ./config/client-internal.properties:/etc/kafka/client-internal.properties:ro
+      - keytabs:/etc/keytabs:ro
+      - ./kerberos/krb5.conf:/etc/krb5.conf:ro
+      - kafka2-data:/var/lib/kafka/data
+    networks:
+      kafka-net:
+        ipv4_address: 172.31.0.12
+    mem_limit: 768m
+    restart: unless-stopped
+
+  # ─── Broker 3 ─────────────────────────────────────────────────────────
+  kafka3:
+    image: confluentinc/cp-kafka:8.2.0
+    container_name: kafka3
+    hostname: kafka3
+    depends_on:
+      - kdc
+      - kafka1
+    ports:
+      - "9195:9095"   # SASL_SSL
+      - "9392:9092"   # PLAINTEXT — lab only
+      - "9199:9099"   # SSL-only — pure mTLS, no SASL
+    environment:
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: broker
+      CLUSTER_ID: "v9QkkNkaQfCyup16RviRyQ"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka1:9096"
+
+      KAFKA_LISTENERS: SASL_SSL://0.0.0.0:9095,INTERNAL://0.0.0.0:19095,PLAINTEXT://0.0.0.0:9092,SSL://0.0.0.0:9099
+      KAFKA_ADVERTISED_LISTENERS: SASL_SSL://kafka3:9195,INTERNAL://kafka3:19095,PLAINTEXT://kafka3:9392,SSL://kafka3:9199
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_SSL:SASL_SSL,CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT,SSL:SSL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256,SCRAM-SHA-512,GSSAPI
+      KAFKA_LISTENER_NAME_SASL__SSL_SCRAM_SHA_256_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"admin\" password=\"<ADMIN_SCRAM_PASSWORD>\";"
+      KAFKA_LISTENER_NAME_SASL__SSL_SCRAM_SHA_512_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"admin\" password=\"<ADMIN_SCRAM_PASSWORD>\";"
+      KAFKA_LISTENER_NAME_SASL__SSL_GSSAPI_SASL_JAAS_CONFIG: "com.sun.security.auth.module.Krb5LoginModule required useKeyTab=true storeKey=true keyTab=\"/etc/keytabs/kafka3.keytab\" principal=\"kafka/kafka3@KAFKA.LOCAL\";"
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: kafka
+
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore_creds
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_SSL_KEY_CREDENTIALS: key_creds
+      KAFKA_SSL_CLIENT_AUTH: required
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/kafka_jaas.conf"
+    volumes:
+      - ./certs/broker:/etc/kafka/secrets:ro
+      - ./config/client-internal.properties:/etc/kafka/client-internal.properties:ro
+      - keytabs:/etc/keytabs:ro
+      - ./kerberos/krb5.conf:/etc/krb5.conf:ro
+      - kafka3-data:/var/lib/kafka/data
+    networks:
+      kafka-net:
+        ipv4_address: 172.31.0.13
+    mem_limit: 768m
+    restart: unless-stopped
+
+  # ─── Schema Registry ──────────────────────────────────────────────────
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.2.0
+    container_name: schema-registry
+    hostname: schema
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    ports:
+      - "8081:8081"   # HTTPS — REST API
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
+      # ── Kafka connection via INTERNAL listener (PLAINTEXT — inside Docker network) ──
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka1:19093,PLAINTEXT://kafka2:19094,PLAINTEXT://kafka3:19095
+      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: PLAINTEXT
+    volumes:
+      - ./certs/schema-registry:/etc/schema-registry/secrets:ro
+    networks:
+      kafka-net:
+        ipv4_address: 172.31.0.20
+    mem_limit: 256m
+    restart: unless-stopped
+
+  # ─── ksqlDB ───────────────────────────────────────────────────────────
+  ksqldb:
+    image: confluentinc/cp-ksqldb-server:8.2.0
+    container_name: ksqldb
+    hostname: ksqldb
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+      - schema-registry
+    ports:
+      - "8088:8088"   # HTTPS — REST API
+    environment:
+      KSQL_LISTENERS: http://0.0.0.0:8088
+      KSQL_HOST_NAME: ksqldb
+      # ── Kafka connection via INTERNAL listener (PLAINTEXT — inside Docker network) ──
+      KSQL_BOOTSTRAP_SERVERS: kafka1:19093,kafka2:19094,kafka3:19095
+      KSQL_SECURITY_PROTOCOL: PLAINTEXT
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+
+      KSQL_HEAP_OPTS: "-Xms256m -Xmx400m"
+    volumes:
+      - ./certs/ksqldb:/etc/ksqldb/secrets:ro
+    networks:
+      kafka-net:
+        ipv4_address: 172.31.0.21
+    mem_limit: 512m
+    restart: unless-stopped
+
+  # ─── Kafka Connect ────────────────────────────────────────────────────
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:8.2.0
+    container_name: kafka-connect
+    hostname: connect
+    command:
+      - bash
+      - -c
+      - |
+        confluent-hub install --no-prompt confluentinc/kafka-connect-elasticsearch:latest
+        /etc/confluent/docker/run
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+      - schema-registry
+    ports:
+      - "8083:8083"   # HTTPS — REST API
+    environment:
+      # ── Kafka connection via INTERNAL listener (PLAINTEXT — inside Docker network) ──
+      CONNECT_BOOTSTRAP_SERVERS: PLAINTEXT://kafka1:19093,PLAINTEXT://kafka2:19094,PLAINTEXT://kafka3:19095
+      CONNECT_SECURITY_PROTOCOL: PLAINTEXT
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_REST_PORT: "8083"
+      CONNECT_LISTENERS: http://0.0.0.0:8083
+      CONNECT_GROUP_ID: kafka-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 2
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 2
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 2
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+
+      # ── Producer + consumer also use INTERNAL (PLAINTEXT) ──
+      CONNECT_PRODUCER_SECURITY_PROTOCOL: PLAINTEXT
+      CONNECT_CONSUMER_SECURITY_PROTOCOL: PLAINTEXT
+
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+      CONNECT_HEAP_OPTS: "-Xms256m -Xmx512m"
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - ./certs/connect:/etc/kafka-connect/secrets:ro
+    networks:
+      kafka-net:
+        ipv4_address: 172.31.0.22
+    mem_limit: 768m
+    restart: unless-stopped
+
+volumes:
+  kdc-data:
+  keytabs:
+  kafka1-data:
+  kafka2-data:
+  kafka3-data:
