@@ -9,6 +9,8 @@ A fully containerized 3-broker **Confluent Platform 8.2.0 / Apache Kafka 4.2** c
 
 Built as a reference lab for testing CDC / streaming clients against every supported Kafka auth mode without standing up separate clusters.
 
+> **This lab is for development and testing only.** Do not use it in production.
+
 ---
 
 ## Why this lab
@@ -153,6 +155,7 @@ The first run pulls the `cp-kafka:8.2.0` image (about 1.3 GB) and takes a few mi
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
 
 
 
