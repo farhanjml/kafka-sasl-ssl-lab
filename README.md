@@ -51,20 +51,52 @@ Full details: [`docs/ENDPOINTS.md`](docs/ENDPOINTS.md).
 
 - Docker + Docker Compose v2
 - Bash, OpenSSL (cert generation)
-- ~2 GB free RAM for the full stack (brokers ~600 MB each, ksqlDB ~500 MB, others ~250–350 MB)
+- **6 GB+ free RAM.** Container memory limits alone total ~4 GB (3 brokers × 768 MB + Kafka Connect 768 MB + ksqlDB 512 MB + Schema Registry 256 MB + KDC 256 MB) — leave headroom for the host OS and Docker itself. Check free RAM first: `free -h`.
+
+## Before you run anything — replace placeholders
+
+This repo ships with placeholder values, not working defaults. `quick-start.sh` will run, but SCRAM auth, TLS, and Kerberos will all use these placeholders unless you replace them first:
+
+| File | Placeholder(s) | Replace with |
+|---|---|---|
+| `docker-compose.yml` | `<KAFKA_HOST_IP>` (all occurrences) | Your host's real IP — used in cert SANs and advertised listeners |
+| `docker-compose.yml` | `<ADMIN_SCRAM_PASSWORD>` (in each broker's `SASL_JAAS_CONFIG`) | A strong password for the `admin` SCRAM user |
+| `scripts/create-scram-users.sh` | `<ADMIN_SCRAM_PASSWORD>`, `<APP_SCRAM_PASSWORD>`, `<DEMO_SCRAM_PASSWORD>` | Match whatever you set above for `admin`; pick your own for the other two users |
+| `scripts/generate-certs.sh` | `<SSL_KEYSTORE_PASSWORD>` | A password for the generated keystores/truststores |
+| `scripts/setup-kerberos.sh` | `<KDC_MASTER_PASSWORD>` | A password for the Kerberos KDC database |
+
+Quickest way to check you got them all:
+
+```bash
+grep -rn '<[A-Z_]*>' docker-compose.yml scripts/*.sh
+```
+
+(should return nothing once every placeholder is replaced)
 
 ## Quick start
 
 ```bash
 git clone https://github.com/farhanjml/kafka-sasl-ssl-lab.git
 cd kafka-sasl-ssl-lab
+
+# 1. Replace placeholders — see table above
+# 2. Make scripts executable
 chmod +x quick-start.sh scripts/*.sh
+
+# 3. Deploy
 ./quick-start.sh
 ```
 
-`quick-start.sh` runs, in order: certificate generation → `docker compose up -d` → Kerberos KDC setup → SCRAM user creation → topic creation → version checks. Safe to re-run — every step is idempotent.
+`quick-start.sh` runs 6 steps automatically, in order, printing progress for each:
 
-**Before running:** edit `docker-compose.yml` and replace `<KAFKA_HOST_IP>` with your host's real IP (used in cert SANs and advertised listeners).
+1. Generate SSL certificates (`scripts/generate-certs.sh`)
+2. Start all containers (`docker compose up -d`)
+3. Set up the Kerberos KDC (`scripts/setup-kerberos.sh`)
+4. Restart brokers so they pick up fresh keytabs
+5. Create SCRAM users (`scripts/create-scram-users.sh`)
+6. Create topics (`scripts/create-topics.sh`)
+
+Takes a few minutes on first run (pulls the `cp-kafka:8.2.0` image, ~1.3 GB). Safe to re-run — every step is idempotent. When it finishes, it prints all broker addresses, ports, and credentials to the terminal.
 
 ## Managing the cluster
 
@@ -103,14 +135,12 @@ chmod +x quick-start.sh scripts/*.sh
 
 ## Security & secrets
 
-This is a sanitized copy of a working internal deployment. Before use:
-
 1. **Generate your own certs** — `scripts/generate-certs.sh` creates a fresh CA and all broker/client keystores; never reuse certs from another environment.
-2. **Set your own passwords** — replace every `<PLACEHOLDER>` in `docker-compose.yml` and `docs/*.md` (SCRAM user passwords, keystore/truststore password, KDC master password).
-3. **Never commit**: `certs/`, `*.key`, `*.p12`, `*.jks`, `*.keytab`, `.env` — all excluded via `.gitignore`.
-4. Default SCRAM users ship with placeholder passwords only — rotate immediately via `manage/manage-scram.sh` before exposing any port beyond localhost.
+2. **Never commit**: `certs/`, `*.key`, `*.p12`, `*.jks`, `*.keytab`, `.env` — all excluded via `.gitignore`.
+3. Rotate all SCRAM passwords via `manage/manage-scram.sh` before exposing any port beyond localhost.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
 
