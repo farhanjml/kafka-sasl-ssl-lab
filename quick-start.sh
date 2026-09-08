@@ -10,6 +10,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+if grep -q '<KAFKA_HOST_IP>' "$SCRIPT_DIR/docker-compose.yml" 2>/dev/null; then
+  echo "❌ docker-compose.yml still has placeholder values."
+  echo "   Run ./scripts/configure.sh first, then run this script again."
+  exit 1
+fi
+
 echo "============================================"
 echo "  kafka-sasl-ssl-v8 — Quick Start"
 echo "  Confluent Platform 8.2.0 / Kafka 4.2"
@@ -109,3 +115,4 @@ echo "      --bootstrap-server kafka1:19093 \\"
 echo "      --command-config /etc/kafka/client-internal.properties \\"
 echo "      --list"
 echo "============================================"
+
