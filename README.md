@@ -17,6 +17,8 @@ Most Kafka security tutorials pick *one* auth mechanism. Real integrations (main
 
 ## Architecture
 
+This lab runs all three brokers as Docker containers on one host. Each broker listens on its own set of ports on that same host. The brokers are not three separate servers — one machine runs all three, plus every other service below.
+
 | Component | Role |
 |---|---|
 | `kafka1`, `kafka2`, `kafka3` | Brokers + KRaft controller quorum (kafka1 is controller) |
@@ -26,6 +28,8 @@ Most Kafka security tutorials pick *one* auth mechanism. Real integrations (main
 | `kdc` | MIT Kerberos KDC (realm `KAFKA.LOCAL`) for GSSAPI auth |
 
 ### Listener matrix
+
+All three brokers run on one host. Each column below is one broker's port on that same host, not three separate machines.
 
 | Listener | Ports (kafka1/2/3) | Auth | Encryption | Use case |
 |---|---|---|---|---|
@@ -149,6 +153,7 @@ The first run pulls the `cp-kafka:8.2.0` image (about 1.3 GB) and takes a few mi
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
 
 
 
