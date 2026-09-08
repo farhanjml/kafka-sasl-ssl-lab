@@ -9,8 +9,6 @@ A fully containerized 3-broker **Confluent Platform 8.2.0 / Apache Kafka 4.2** c
 
 Built as a reference lab for testing CDC / streaming clients against every supported Kafka auth mode without standing up separate clusters.
 
-> ⚠️ **This repo is a sanitized template.** All real hostnames, IPs, and passwords from the original deployment have been replaced with placeholders (`<KAFKA_HOST_IP>`, `<ADMIN_SCRAM_PASSWORD>`, etc.) — see [Security](#security--secrets) before using it.
-
 ---
 
 ## Why this lab
@@ -115,3 +113,4 @@ This is a sanitized copy of a working internal deployment. Before use:
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
